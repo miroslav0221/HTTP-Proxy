@@ -82,7 +82,9 @@ static int sendFromCache(int clientSocket, CacheNodeT *node) {
 static int forwardResponse(int clientSocket, int remoteSocket, Buffer *buffer) {
     while (1) {
         ssize_t n = recv(remoteSocket, buffer->data, buffer->capacity, 0);
-        if (n <= 0) break;
+        if (n <= 0) {
+            break;  
+        } 
         if (sendAll(clientSocket, buffer->data, n) < 0) {
             return ERROR;
         }
@@ -179,12 +181,10 @@ static int handleGet(CacheManagerT *cache,
         CacheManagerT_put_CacheNodeT(cache, node);
     }
 
-    CacheEntryT_acquire(node->entry);
     pthread_mutex_unlock(&cache->entriesMutex);
 
     int result = sendFromCache(clientSocket, node);
     
-    CacheEntryT_release(node->entry);
     return result;
 }
 
@@ -252,5 +252,13 @@ void *handleClientThread(void *args) {
 
     close(ctx->clientSocket);
     free(ctx);
+
+    pthread_mutex_lock(&clientsMutex);
+    activeClients--;
+    if (activeClients == 0) {
+        pthread_cond_signal(&clientsCond);
+    }
+    pthread_mutex_unlock(&clientsMutex);
+
     return NULL;
 }

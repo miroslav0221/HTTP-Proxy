@@ -25,12 +25,10 @@ struct CacheEntryChunk {
 
 struct CacheEntry {
     char                               *url;
-    struct timeval                      lastUpdate;
     volatile CacheEntryChunkT *volatile dataChunks;
     volatile CacheEntryChunkT *volatile lastChunk;
     volatile size_t                     downloadedSize;
     volatile CacheStatusT               status;
-    volatile int                        usersQ;
     pthread_mutex_t                     dataMutex;
     pthread_cond_t                      dataCond;
 };
@@ -44,7 +42,6 @@ struct CacheManager {
     pthread_mutex_t  entriesMutex;
     CacheNodeT      *nodes;
     CacheNodeT      *lastNode;
-    long             entryThresholdMs;
 };
 
 CacheEntryChunkT *CacheEntryChunkT_new(size_t dataSize);
@@ -52,8 +49,7 @@ void              CacheEntryChunkT_delete(CacheEntryChunkT *chunk);
 
 CacheEntryT *CacheEntryT_new(void);
 void         CacheEntryT_delete(CacheEntryT *entry);
-void         CacheEntryT_acquire(CacheEntryT *entry);
-void         CacheEntryT_release(CacheEntryT *entry);
+
 void         CacheEntryT_updateStatus(CacheEntryT *entry, CacheStatusT status);
 CacheEntryChunkT *CacheEntryT_appendData(CacheEntryT *entry, const char *data,
                                           size_t dataSize, CacheStatusT status);

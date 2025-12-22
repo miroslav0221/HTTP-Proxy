@@ -5,11 +5,11 @@
 #include <stddef.h>
 #include "../cache/cache.h"
 #include <sys/types.h>
+#include <signal.h>
 
 #define BUFFER_SIZE      16384
 #define HOST_MAX_LEN     1024
 #define PATH_MAX_LEN     2048
-#define MAX_HEADER_SIZE  8192
 
 #define SUCCESS          0
 #define ERROR           (-1)
@@ -17,6 +17,11 @@
 extern const char *HTTP_400_BAD_REQUEST;
 extern const char *HTTP_500_INTERNAL_ERROR;
 extern const char *HTTP_502_BAD_GATEWAY;
+
+extern volatile sig_atomic_t serverShutdown;
+extern int activeClients;
+extern pthread_mutex_t clientsMutex;
+extern pthread_cond_t clientsCond;
 
 typedef struct Buffer {
     char  *data;
@@ -35,24 +40,14 @@ typedef struct FileUploadContext {
     int          remoteSocket;
 } FileUploadContext;
 
-typedef struct HttpResponseInfo {
-    int  statusCode;
-    long contentLength;  
-    int  isChunked;
-    int  headerLength;   
-} HttpResponseInfo;
-
 Buffer *Buffer_create(size_t capacity);
 void    Buffer_destroy(Buffer *buffer);
 void    Buffer_clear(Buffer *buffer);
 
 int parseUrl(const char *url, char *host, char *path, int *port);
-int parseResponseHeaders(const char *data, size_t len, HttpResponseInfo *info);
-int findHeaderEnd(const char *data, size_t len);
 
 int     connectToHost(const char *host, int port);
 ssize_t sendAll(int socket, const char *data, size_t size);
-ssize_t recvExact(int socket, char *buffer, size_t size);
 ssize_t recvUntilHeaderEnd(int socket, Buffer *buffer);
 
 void sendErrorResponse(int socket, const char *status, const char *message);

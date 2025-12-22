@@ -9,7 +9,6 @@ CacheManagerT *CacheManagerT_new(void) {
     }
     
     memset(manager, 0, sizeof(CacheManagerT));
-    manager->entryThresholdMs = 60000; 
     
     if (pthread_mutex_init(&manager->entriesMutex, NULL) != 0) {
         free(manager);

@@ -45,20 +45,6 @@ void CacheEntryT_delete(CacheEntryT *entry) {
     free(entry);
 }
 
-void CacheEntryT_acquire(CacheEntryT *entry) {
-    pthread_mutex_lock(&entry->dataMutex);
-    entry->usersQ++;
-    gettimeofday(&entry->lastUpdate, NULL);
-    pthread_mutex_unlock(&entry->dataMutex);
-}
-
-void CacheEntryT_release(CacheEntryT *entry) {
-    pthread_mutex_lock(&entry->dataMutex);
-    entry->usersQ--;
-    gettimeofday(&entry->lastUpdate, NULL);
-    pthread_mutex_unlock(&entry->dataMutex);
-}
-
 void CacheEntryT_updateStatus(CacheEntryT *entry, CacheStatusT status) {
     if (entry == NULL) {
         return;
@@ -66,7 +52,6 @@ void CacheEntryT_updateStatus(CacheEntryT *entry, CacheStatusT status) {
     
     pthread_mutex_lock(&entry->dataMutex);
     entry->status = status;
-    gettimeofday(&entry->lastUpdate, NULL);
     pthread_cond_broadcast(&entry->dataCond);
     pthread_mutex_unlock(&entry->dataMutex);
 }
@@ -80,7 +65,6 @@ static void appendChunk(CacheEntryT *entry, CacheEntryChunkT *chunk) {
         entry->lastChunk = chunk;
     }
     entry->downloadedSize += chunk->maxDataSize;
-    gettimeofday(&entry->lastUpdate, NULL);
 }
 
 CacheEntryChunkT *CacheEntryT_appendData(CacheEntryT *entry,
