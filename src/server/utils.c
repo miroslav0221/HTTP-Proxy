@@ -166,6 +166,18 @@ ssize_t sendAll(int socket, const char *data, size_t size)
 
 ssize_t recvToBuffer(int socket, Buffer *buffer)
 {
+
+    if (Buffer_available(buffer) < 1024)
+    {
+        size_t newCapacity = get_Buffer_capacity(buffer) * 2;
+        if (Buffer_reserve(buffer, newCapacity) != 0)
+        {
+            logError("Failed to expand buffer");
+            return ERROR;
+        }
+    }
+
+
     char *ptr = Buffer_writePtr(buffer);
     size_t available = Buffer_available(buffer);
 
