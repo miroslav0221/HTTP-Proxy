@@ -3,61 +3,69 @@
 
 #include <pthread.h>
 #include <stddef.h>
-#include "../cache/cache.h"
 #include <sys/types.h>
 #include <signal.h>
 
-#define BUFFER_SIZE      16384
-#define HOST_MAX_LEN     1024
-#define PATH_MAX_LEN     2048
+#include "cache.h"
 
-#define SUCCESS          0
-#define ERROR           (-1)
+#define BUFFER_SIZE 16384
+#define HOST_MAX_LEN 1024
+#define PATH_MAX_LEN 2048
+
+#define SUCCESS 0
+#define ERROR (-1)
+
+#define SOCKET_TIMEOUT_SEC 30
 
 extern const char *HTTP_400_BAD_REQUEST;
 extern const char *HTTP_500_INTERNAL_ERROR;
 extern const char *HTTP_502_BAD_GATEWAY;
 
-extern volatile sig_atomic_t serverShutdown;
+extern sig_atomic_t serverShutdown;
 extern int activeClients;
 extern pthread_mutex_t clientsMutex;
 extern pthread_cond_t clientsCond;
 
-typedef struct Buffer {
-    char  *data;
+typedef struct Buffer
+{
+    char *data;
     size_t size;
     size_t capacity;
 } Buffer;
 
-typedef struct ClientContext {
+typedef struct ClientContext
+{
     CacheManagerT *cacheManager;
-    int            clientSocket;
+    int clientSocket;
 } ClientContext;
 
-typedef struct FileUploadContext {
+typedef struct FileUploadContext
+{
     CacheEntryT *entry;
-    Buffer      *buffer;
-    int          remoteSocket;
+    Buffer *buffer;
+    int remoteSocket;
 } FileUploadContext;
 
 Buffer *Buffer_create(size_t capacity);
-void    Buffer_destroy(Buffer *buffer);
-void    Buffer_clear(Buffer *buffer);
+void Buffer_destroy(Buffer *buffer);
+void Buffer_clear(Buffer *buffer);
+
+int setSocketTimeout(int socket, int timeoutSec);
 
 int parseUrl(const char *url, char *host, char *path, int *port);
 
-int     connectToHost(const char *host, int port);
+int connectToHost(const char *host, int port);
 ssize_t sendAll(int socket, const char *data, size_t size);
 ssize_t recvUntilHeaderEnd(int socket, Buffer *buffer);
 
 void sendErrorResponse(int socket, const char *status, const char *message);
-int  isGetRequest(const char *method);
+int isGetRequest(const char *method);
 
-void  startProxyServer(int port);
+void startProxyServer(int port);
 void *handleClientThread(void *args);
 
-int   startBackgroundUpload(CacheEntryT *entry, Buffer *buffer, 
-                            int remoteSocket);
+int startBackgroundUpload(CacheEntryT *entry, Buffer *buffer,
+                          int remoteSocket);
 void *fileUploadThread(void *args);
 
 #endif

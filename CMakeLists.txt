@@ -11,3 +11,8 @@ file(GLOB_RECURSE SRC_FILES ${SRC_DIR}/*.c)
 add_executable(${BIN_NAME} main.c ${SRC_FILES})
 target_link_libraries(${BIN_NAME} pthread)
 
+set(INCLUDE_DIRS 
+    ${CMAKE_SOURCE_DIR}/include
+)
+
+target_include_directories(${BIN_NAME} PRIVATE ${INCLUDE_DIRS})
