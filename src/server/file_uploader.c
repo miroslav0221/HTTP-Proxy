@@ -1,8 +1,31 @@
 #include "proxy.h"
 #include "log.h"
+#include "buffer.h"
 
 #include <stdlib.h>
 #include <unistd.h>
+#include <sys/socket.h>
+
+static ssize_t recvToBufferUpload(int socket, Buffer *buffer)
+{
+    char *ptr = Buffer_writePtr(buffer);
+    size_t available = Buffer_available(buffer);
+
+    if (available == 0)
+    {
+        logError("Buffer is full");
+        return -1;
+    }
+
+    ssize_t n = recv(socket, ptr, available, 0);
+
+    if (n > 0)
+    {
+        Buffer_advanceSize(buffer, n);
+    }
+
+    return n;
+}
 
 void *fileUploadThread(void *args)
 {
@@ -16,7 +39,9 @@ void *fileUploadThread(void *args)
 
     while (1)
     {
-        ssize_t received = recv(remoteSocket, buffer->data, buffer->capacity, 0);
+        Buffer_clear(buffer);
+
+        ssize_t received = recvToBufferUpload(remoteSocket, buffer);
 
         if (received < 0)
         {
@@ -31,10 +56,8 @@ void *fileUploadThread(void *args)
             break;
         }
 
-        buffer->size = received;
-
         CacheEntryChunkT *chunk = CacheEntryT_appendData(
-            entry, buffer->data, buffer->size, InProcess);
+            entry, get_Buffer_data(buffer), get_Buffer_size(buffer), InProcess);
 
         if (chunk == NULL)
         {
@@ -48,7 +71,7 @@ void *fileUploadThread(void *args)
 
     if (finalStatus == Success)
     {
-        logDebug("File upload completed successfully");
+        logInfo("File upload completed successfully");
     }
     else
     {
@@ -78,7 +101,7 @@ int startBackgroundUpload(CacheEntryT *entry,
         goto cleanup;
     }
 
-    uploadBuffer = Buffer_create(requestBuffer->capacity);
+    uploadBuffer = Buffer_create(get_Buffer_capacity(requestBuffer));
     if (uploadBuffer == NULL)
     {
         logError("Failed to create upload buffer");

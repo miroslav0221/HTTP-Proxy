@@ -1,5 +1,6 @@
 #include "proxy.h"
 #include "log.h"
+#include "buffer.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -99,14 +100,16 @@ static int forwardResponse(int clientSocket, int remoteSocket, Buffer *buffer)
 
     while (1)
     {
-        ssize_t n = recv(remoteSocket, buffer->data, buffer->capacity, 0);
+        Buffer_clear(buffer);
+
+        ssize_t n = recvToBuffer(remoteSocket, buffer);
 
         if (n <= 0)
         {
             break;
         }
 
-        if (sendAll(clientSocket, buffer->data, n) < 0)
+        if (sendAll(clientSocket, get_Buffer_data(buffer), get_Buffer_size(buffer)) < 0)
         {
             logError("Failed to forward response");
             return ERROR;
@@ -141,7 +144,7 @@ static CacheNodeT *startDownload(Buffer *buffer,
 
     logDebug("Sending request to remote");
 
-    if (sendAll(remoteSocket, buffer->data, buffer->size) < 0)
+    if (sendAll(remoteSocket, get_Buffer_data(buffer), get_Buffer_size(buffer)) < 0)
     {
         logError("Failed to send request to remote");
         sendErrorResponse(clientSocket, HTTP_502_BAD_GATEWAY, "Failed to send request");
@@ -160,11 +163,19 @@ static CacheNodeT *startDownload(Buffer *buffer,
 
     logDebug("Received response headers");
 
-    if (!isResponse200(buffer->data))
+    const char *responseData = Buffer_asString(buffer);
+
+    if (!isResponse200(responseData))
     {
         logDebug("Response is not 200 OK, forwarding without cache");
-        sendAll(clientSocket, buffer->data, buffer->size);
-        forwardResponse(clientSocket, remoteSocket, buffer);
+        if (sendAll(clientSocket, get_Buffer_data(buffer), get_Buffer_size(buffer)) < 0)
+        {
+            logError("Failed sendall");
+        }
+        if (forwardResponse(clientSocket, remoteSocket, buffer) < 0)
+        {
+            logError("Failed sendall");
+        }
         goto cleanup_socket;
     }
 
@@ -189,7 +200,7 @@ static CacheNodeT *startDownload(Buffer *buffer,
         goto cleanup_cache;
     }
 
-    CacheEntryT_appendData(entry, buffer->data, buffer->size, InProcess);
+    CacheEntryT_appendData(entry, get_Buffer_data(buffer), get_Buffer_size(buffer), InProcess);
 
     if (startBackgroundUpload(entry, buffer, remoteSocket) != SUCCESS)
     {
@@ -280,7 +291,7 @@ static int handleOther(Buffer *buffer,
         return ERROR;
     }
 
-    if (sendAll(remoteSocket, buffer->data, buffer->size) < 0)
+    if (sendAll(remoteSocket, get_Buffer_data(buffer), get_Buffer_size(buffer)) < 0)
     {
         logError("Failed to send request");
         sendErrorResponse(clientSocket, HTTP_502_BAD_GATEWAY, "Failed to send request");
@@ -295,7 +306,7 @@ static int handleOther(Buffer *buffer,
         goto cleanup;
     }
 
-    if (sendAll(clientSocket, buffer->data, buffer->size) < 0)
+    if (sendAll(clientSocket, get_Buffer_data(buffer), get_Buffer_size(buffer)) < 0)
     {
         logError("Failed to send response headers");
         goto cleanup;
@@ -335,9 +346,10 @@ static int processRequest(CacheManagerT *cache, Buffer *buffer, int clientSocket
         sendErrorResponse(clientSocket, HTTP_400_BAD_REQUEST, "Failed to read request");
         return ERROR;
     }
-    buffer->data[buffer->size] = '\0';
 
-    if (sscanf(buffer->data, "%15s %2047s %15s", method, url, protocol) != 3)
+    const char *requestData = Buffer_asString(buffer);
+
+    if (sscanf(requestData, "%15s %2047s %15s", method, url, protocol) != 3)
     {
         logError("Invalid request format");
         sendErrorResponse(clientSocket, HTTP_400_BAD_REQUEST, "Invalid request format");

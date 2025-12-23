@@ -7,6 +7,7 @@
 #include <signal.h>
 
 #include "cache.h"
+#include "buffer.h"
 
 #define BUFFER_SIZE 16384
 #define HOST_MAX_LEN 1024
@@ -26,13 +27,6 @@ extern int activeClients;
 extern pthread_mutex_t clientsMutex;
 extern pthread_cond_t clientsCond;
 
-typedef struct Buffer
-{
-    char *data;
-    size_t size;
-    size_t capacity;
-} Buffer;
-
 typedef struct ClientContext
 {
     CacheManagerT *cacheManager;
@@ -46,10 +40,6 @@ typedef struct FileUploadContext
     int remoteSocket;
 } FileUploadContext;
 
-Buffer *Buffer_create(size_t capacity);
-void Buffer_destroy(Buffer *buffer);
-void Buffer_clear(Buffer *buffer);
-
 int setSocketTimeout(int socket, int timeoutSec);
 
 int parseUrl(const char *url, char *host, char *path, int *port);
@@ -60,6 +50,8 @@ ssize_t recvUntilHeaderEnd(int socket, Buffer *buffer);
 
 void sendErrorResponse(int socket, const char *status, const char *message);
 int isGetRequest(const char *method);
+
+ssize_t recvToBuffer(int socket, Buffer *buffer);
 
 void startProxyServer(int port);
 void *handleClientThread(void *args);

@@ -1,5 +1,6 @@
 #include "proxy.h"
 #include "log.h"
+#include "buffer.h"
 
 #include <pthread.h>
 #include <signal.h>

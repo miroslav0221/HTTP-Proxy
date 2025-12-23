@@ -1,5 +1,6 @@
 #include "proxy.h"
 #include "log.h"
+#include "buffer.h"
 
 #include <errno.h>
 #include <netdb.h>
@@ -10,43 +11,6 @@
 #include <sys/socket.h>
 
 #define DEFAULT_HTTP_PORT 80
-
-Buffer *Buffer_create(size_t capacity)
-{
-    Buffer *buf = malloc(sizeof(Buffer));
-    if (buf == NULL)
-    {
-        logError("Failed to allocate buffer structure");
-        return NULL;
-    }
-
-    buf->data = malloc(capacity + 1);
-    if (buf->data == NULL)
-    {
-        logError("Failed to allocate buffer data");
-        free(buf);
-        return NULL;
-    }
-
-    buf->size = 0;
-    buf->capacity = capacity;
-    return buf;
-}
-
-void Buffer_destroy(Buffer *buffer)
-{
-    if (buffer == NULL)
-    {
-        return;
-    }
-    free(buffer->data);
-    free(buffer);
-}
-
-void Buffer_clear(Buffer *buffer)
-{
-    buffer->size = 0;
-}
 
 int parseUrl(const char *url, char *host, char *path, int *port)
 {
@@ -74,8 +38,11 @@ int parseUrl(const char *url, char *host, char *path, int *port)
     return ERROR;
 }
 
-static int findHeaderEnd(const char *data, size_t len)
+static int findHeaderEnd(Buffer *buffer)
 {
+    const char *data = get_Buffer_data(buffer);
+    size_t len = get_Buffer_size(buffer);
+
     for (size_t i = 0; i + 3 < len; i++)
     {
         if (data[i] == '\r' && data[i + 1] == '\n' &&
@@ -197,25 +164,50 @@ ssize_t sendAll(int socket, const char *data, size_t size)
     return sent;
 }
 
+ssize_t recvToBuffer(int socket, Buffer *buffer)
+{
+    char *ptr = Buffer_writePtr(buffer);
+    size_t available = Buffer_available(buffer);
+
+    if (available == 0)
+    {
+        logError("Buffer is full");
+        return ERROR;
+    }
+
+    ssize_t n = recv(socket, ptr, available, 0);
+
+    if (n < 0)
+    {
+        if (errno == ETIMEDOUT || errno == EAGAIN || errno == EWOULDBLOCK)
+        {
+            logError("Receive timed out");
+        }
+        else
+        {
+            logError("Receive failed");
+        }
+        return ERROR;
+    }
+
+    if (n > 0)
+    {
+        Buffer_advanceSize(buffer, n);
+    }
+
+    return n;
+}
+
 ssize_t recvUntilHeaderEnd(int socket, Buffer *buffer)
 {
     Buffer_clear(buffer);
 
-    while (buffer->size < buffer->capacity)
+    while (Buffer_available(buffer) > 0)
     {
-        ssize_t n = recv(socket, buffer->data + buffer->size,
-                         buffer->capacity - buffer->size, 0);
+        ssize_t n = recvToBuffer(socket, buffer);
 
         if (n < 0)
         {
-            if (errno == ETIMEDOUT || errno == EAGAIN || errno == EWOULDBLOCK)
-            {
-                logError("Receive timed out");
-            }
-            else
-            {
-                logError("Receive failed");
-            }
             return ERROR;
         }
 
@@ -225,16 +217,13 @@ ssize_t recvUntilHeaderEnd(int socket, Buffer *buffer)
             break;
         }
 
-        buffer->size += n;
-        buffer->data[buffer->size] = '\0';
-
-        if (findHeaderEnd(buffer->data, buffer->size) >= 0)
+        if (findHeaderEnd(buffer) >= 0)
         {
             break;
         }
     }
 
-    return buffer->size;
+    return get_Buffer_size(buffer);
 }
 
 void sendErrorResponse(int sock, const char *status, const char *message)
@@ -247,6 +236,9 @@ void sendErrorResponse(int sock, const char *status, const char *message)
 
     if (len > 0)
     {
-        sendAll(sock, response, len);
+        if (sendAll(sock, response, len) < 0)
+        {
+            logError("Failed sendall");
+        }
     }
 }
