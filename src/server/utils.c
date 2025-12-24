@@ -376,6 +376,8 @@ void sendErrorResponse(int sock, const char *status, const char *message)
 
     if (len > 0)
     {
-        sendAll(sock, response, len);
+        if (sendAll(sock, response, len) < 0) {
+            logError("Faild sendall");
+        }
     }
 }
