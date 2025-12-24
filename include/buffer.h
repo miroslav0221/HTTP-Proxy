@@ -25,7 +25,7 @@ size_t get_Buffer_capacity(const Buffer *buffer);
 char *Buffer_writePtr(Buffer *buffer);
 size_t Buffer_available(const Buffer *buffer);
 void Buffer_advanceSize(Buffer *buffer, size_t count);
-
+int Buffer_reserve(Buffer *buffer, size_t minCapacity);
 const char *Buffer_asString(Buffer *buffer);
 
 #endif

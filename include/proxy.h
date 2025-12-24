@@ -52,12 +52,13 @@ void sendErrorResponse(int socket, const char *status, const char *message);
 int isGetRequest(const char *method);
 
 ssize_t recvToBuffer(int socket, Buffer *buffer);
-
+ssize_t recvWithTimeout(int socket, char *buffer, size_t size, int timeoutSec);
 void startProxyServer(int port);
 void *handleClientThread(void *args);
 
 int startBackgroundUpload(CacheEntryT *entry, Buffer *buffer,
                           int remoteSocket);
 void *fileUploadThread(void *args);
+int waitForReadable(int sock, int timeoutSec);
 
 #endif

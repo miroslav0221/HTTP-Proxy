@@ -65,44 +65,6 @@ void Buffer_clear(Buffer *buffer)
     buffer->size = 0;
 }
 
-int Buffer_append(Buffer *buffer, const void *data, size_t len)
-{
-    if (len == 0)
-    {
-        return 0;
-    }
-
-    size_t required = buffer->size + len;
-    if (Buffer_reserve(buffer, required) != 0)
-    {
-        return -1;
-    }
-
-    memcpy(buffer->data + buffer->size, data, len);
-    buffer->size += len;
-    return 0;
-}
-
-int Buffer_appendString(Buffer *buffer, const char *string)
-{
-    if (string == NULL)
-    {
-        return 0;
-    }
-
-    size_t len = strlen(string);
-
-    size_t required = buffer->size + len + 1;
-    if (Buffer_reserve(buffer, required) != 0)
-    {
-        return -1;
-    }
-
-    memcpy(buffer->data + buffer->size, string, len + 1);
-    buffer->size += len + 1;
-    return 0;
-}
-
 const char *get_Buffer_data(const Buffer *buffer)
 {
     return buffer->data;

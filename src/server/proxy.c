@@ -116,11 +116,6 @@ static void handleNewClient(int serverSocket, CacheManagerT *cacheManager)
 
     logDebug("New client connection accepted");
 
-    if (setSocketTimeout(clientSocket, SOCKET_TIMEOUT_SEC) != SUCCESS)
-    {
-        goto cleanup;
-    }
-
     ctx = malloc(sizeof(ClientContext));
     if (ctx == NULL)
     {

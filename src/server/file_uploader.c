@@ -2,9 +2,35 @@
 #include "log.h"
 #include "buffer.h"
 
+#include <errno.h>
 #include <stdlib.h>
 #include <unistd.h>
 #include <sys/socket.h>
+#include <sys/select.h>
+
+#define DOWNLOAD_TIMEOUT_SEC 30
+
+static ssize_t recvWithTimeoutUpload(int socket, char *buffer, size_t size)
+{
+    if (waitForReadable(socket, DOWNLOAD_TIMEOUT_SEC) != SUCCESS)
+    {
+        if (errno == ETIMEDOUT)
+        {
+            logError("Download receive timed out");
+        }
+        return ERROR;
+    }
+
+    ssize_t n = recv(socket, buffer, size, 0);
+
+    if (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK)
+    {
+        logError("Download receive failed");
+        return ERROR;
+    }
+
+    return n;
+}
 
 static ssize_t recvToBufferUpload(int socket, Buffer *buffer)
 {
@@ -14,10 +40,10 @@ static ssize_t recvToBufferUpload(int socket, Buffer *buffer)
     if (available == 0)
     {
         logError("Buffer is full");
-        return -1;
+        return ERROR;
     }
 
-    ssize_t n = recv(socket, ptr, available, 0);
+    ssize_t n = recvWithTimeoutUpload(socket, ptr, available);
 
     if (n > 0)
     {
@@ -57,7 +83,8 @@ void *fileUploadThread(void *args)
         }
 
         CacheEntryChunkT *chunk = CacheEntryT_appendData(
-            entry, get_Buffer_data(buffer), get_Buffer_size(buffer), InProcess);
+            entry, get_Buffer_data(buffer), get_Buffer_size(buffer), InProcess
+        );
 
         if (chunk == NULL)
         {

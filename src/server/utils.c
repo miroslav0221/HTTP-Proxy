@@ -3,14 +3,102 @@
 #include "buffer.h"
 
 #include <errno.h>
+#include <fcntl.h>
 #include <netdb.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 #include <sys/socket.h>
+#include <sys/select.h>
 
-#define DEFAULT_HTTP_PORT 80
+#define DEFAULT_HTTP_PORT   80
+#define CONNECT_TIMEOUT_SEC 30
+#define IO_TIMEOUT_SEC      60
+
+static int setNonBlocking(int sock)
+{
+    int flags = fcntl(sock, F_GETFL, 0);
+    if (flags < 0)
+    {
+        return ERROR;
+    }
+    return fcntl(sock, F_SETFL, flags | O_NONBLOCK);
+}
+
+static int setBlocking(int sock)
+{
+    int flags = fcntl(sock, F_GETFL, 0);
+    if (flags < 0)
+    {
+        return ERROR;
+    }
+    return fcntl(sock, F_SETFL, flags & ~O_NONBLOCK);
+}
+
+static int getSocketError(int sock)
+{
+    int error = 0;
+    socklen_t len = sizeof(error);
+    
+    if (getsockopt(sock, SOL_SOCKET, SO_ERROR, &error, &len) < 0)
+    {
+        return errno;
+    }
+    return error;
+}
+
+static int waitForWritable(int sock, int timeoutSec)
+{
+    fd_set writefds;
+    struct timeval timeout;
+
+    FD_ZERO(&writefds);
+    FD_SET(sock, &writefds);
+
+    timeout.tv_sec = timeoutSec;
+    timeout.tv_usec = 0;
+
+    int result = select(sock + 1, NULL, &writefds, NULL, &timeout);
+
+    if (result < 0)
+    {
+        return ERROR;
+    }
+    if (result == 0)
+    {
+        errno = ETIMEDOUT;
+        return ERROR;
+    }
+
+    return SUCCESS;
+}
+
+int waitForReadable(int sock, int timeoutSec)
+{
+    fd_set readfds;
+    struct timeval timeout;
+
+    FD_ZERO(&readfds);
+    FD_SET(sock, &readfds);
+
+    timeout.tv_sec = timeoutSec;
+    timeout.tv_usec = 0;
+
+    int result = select(sock + 1, &readfds, NULL, NULL, &timeout);
+
+    if (result < 0)
+    {
+        return ERROR;
+    }
+    if (result == 0)
+    {
+        errno = ETIMEDOUT;
+        return ERROR;
+    }
+
+    return SUCCESS;
+}
 
 int parseUrl(const char *url, char *host, char *path, int *port)
 {
@@ -65,30 +153,10 @@ int isGetRequest(const char *method)
     return strcmp(method, "GET") == 0;
 }
 
-int setSocketTimeout(int socket, int timeoutSec)
-{
-    struct timeval timeout;
-    timeout.tv_sec = timeoutSec;
-    timeout.tv_usec = 0;
-
-    if (setsockopt(socket, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) < 0)
-    {
-        logError("Failed to set receive timeout");
-        return ERROR;
-    }
-
-    if (setsockopt(socket, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout)) < 0)
-    {
-        logError("Failed to set send timeout");
-        return ERROR;
-    }
-
-    return SUCCESS;
-}
-
 int connectToHost(const char *host, int port)
 {
     int sock = -1;
+    int error = 0;
 
     logDebug("Resolving host");
 
@@ -106,8 +174,9 @@ int connectToHost(const char *host, int port)
         return ERROR;
     }
 
-    if (setSocketTimeout(sock, SOCKET_TIMEOUT_SEC) != SUCCESS)
+    if (setNonBlocking(sock) < 0)
     {
+        logError("Failed to set non-blocking mode");
         goto cleanup;
     }
 
@@ -116,16 +185,40 @@ int connectToHost(const char *host, int port)
     addr.sin_port = htons(port);
     memcpy(&addr.sin_addr.s_addr, server->h_addr, server->h_length);
 
-    if (connect(sock, (struct sockaddr *)&addr, sizeof(addr)) < 0)
+    int result = connect(sock, (struct sockaddr *)&addr, sizeof(addr));
+
+    if (result < 0)
     {
-        if (errno == ETIMEDOUT)
+        if (errno != EINPROGRESS)
         {
-            logError("Connection timed out");
+            logError("Failed to initiate connection");
+            goto cleanup;
         }
-        else
+
+        if (waitForWritable(sock, CONNECT_TIMEOUT_SEC) != SUCCESS)
         {
-            logError("Failed to connect");
+            if (errno == ETIMEDOUT)
+            {
+                logError("Connection timed out");
+            }
+            else
+            {
+                logError("Connection wait failed");
+            }
+            goto cleanup;
         }
+
+        error = getSocketError(sock);
+        if (error != 0)
+        {
+            logError("Connection failed");
+            goto cleanup;
+        }
+    }
+
+    if (setBlocking(sock) < 0)
+    {
+        logError("Failed to set blocking mode");
         goto cleanup;
     }
 
@@ -143,10 +236,10 @@ cleanup:
 ssize_t sendAll(int socket, const char *data, size_t size)
 {
     size_t sent = 0;
+
     while (sent < size)
     {
-        ssize_t n = send(socket, data + sent, size - sent, 0);
-        if (n <= 0)
+        if (waitForWritable(socket, IO_TIMEOUT_SEC) != SUCCESS)
         {
             if (errno == ETIMEDOUT)
             {
@@ -154,51 +247,86 @@ ssize_t sendAll(int socket, const char *data, size_t size)
             }
             else
             {
-                logError("Send failed");
+                logError("Send wait failed");
             }
             return ERROR;
         }
+
+        ssize_t n = send(socket, data + sent, size - sent, 0);
+        if (n < 0)
+        {
+            if (errno == EAGAIN || errno == EWOULDBLOCK)
+            {
+                continue; 
+            }
+            logError("Send failed");
+            return ERROR;
+        }
+        if (n == 0)
+        {
+            logError("Connection closed during send");
+            return ERROR;
+        }
+
         sent += n;
     }
 
     return sent;
 }
 
-ssize_t recvToBuffer(int socket, Buffer *buffer)
+ssize_t recvWithTimeout(int socket, char *buffer, size_t size, int timeoutSec)
 {
-
-    if (Buffer_available(buffer) < 1024)
+    if (waitForReadable(socket, timeoutSec) != SUCCESS)
     {
-        size_t newCapacity = get_Buffer_capacity(buffer) * 2;
-        if (Buffer_reserve(buffer, newCapacity) != 0)
-        {
-            logError("Failed to expand buffer");
-            return ERROR;
-        }
-    }
-
-
-    char *ptr = Buffer_writePtr(buffer);
-    size_t available = Buffer_available(buffer);
-
-    if (available == 0)
-    {
-        logError("Buffer is full");
-        return ERROR;
-    }
-
-    ssize_t n = recv(socket, ptr, available, 0);
-
-    if (n < 0)
-    {
-        if (errno == ETIMEDOUT || errno == EAGAIN || errno == EWOULDBLOCK)
+        if (errno == ETIMEDOUT)
         {
             logError("Receive timed out");
         }
         else
         {
+            logError("Receive wait failed");
+        }
+        return ERROR;
+    }
+
+    ssize_t n = recv(socket, buffer, size, 0);
+
+    if (n < 0)
+    {
+        if (errno != EAGAIN)
+        {
             logError("Receive failed");
         }
+        return ERROR;
+    }
+
+    return n;
+}
+
+ssize_t recvToBuffer(int socket, Buffer *buffer)
+{
+    if (Buffer_available(buffer) == 0)
+    {
+        size_t currentCap = get_Buffer_capacity(buffer);
+
+        size_t newCapacity = currentCap * 2;
+
+        if (Buffer_reserve(buffer, newCapacity) != 0)
+        {
+            logError("Failed to expand buffer");
+            return ERROR;
+        }
+
+        logDebug("Buffer expanded");
+    }
+
+    char *ptr = Buffer_writePtr(buffer);
+    size_t available = Buffer_available(buffer);
+
+    ssize_t n = recvWithTimeout(socket, ptr, available, IO_TIMEOUT_SEC);
+
+    if (n < 0)
+    {
         return ERROR;
     }
 
@@ -214,7 +342,7 @@ ssize_t recvUntilHeaderEnd(int socket, Buffer *buffer)
 {
     Buffer_clear(buffer);
 
-    while (Buffer_available(buffer) > 0)
+    while (1)
     {
         ssize_t n = recvToBuffer(socket, buffer);
 
@@ -248,9 +376,6 @@ void sendErrorResponse(int sock, const char *status, const char *message)
 
     if (len > 0)
     {
-        if (sendAll(sock, response, len) < 0)
-        {
-            logError("Failed sendall");
-        }
+        sendAll(sock, response, len);
     }
 }
